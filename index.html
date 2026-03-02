@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bender Enterprise v6.1 - Local RAG UI</title>
+    <link rel="icon" href="data:,">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+
+    <style>
+        .typing-dot { animation: typing 1.4s infinite; display: inline-block; width: 6px; height: 6px; background: #9ca3af; border-radius: 50%; margin: 0 2px; }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
+        
+        .prose pre { background: #1f2937; color: white; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+        #chat-container::-webkit-scrollbar { width: 6px; }
+        #chat-container::-webkit-scrollbar-thumb { background-color: #d1d5db; border-radius: 10px; }
+        
+        .msg-del-btn { opacity: 0; transition: opacity 0.2s; background: transparent; border: none; cursor: pointer; }
+        .bubble-container:hover .msg-del-btn { opacity: 1; }
+        
+        .chat-item .rename-btn { opacity: 0; transition: opacity 0.2s; }
+        .chat-item:hover .rename-btn { opacity: 1; }
+        
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+        
+        #userInput { resize: none; min-height: 56px; max-height: 200px; transition: height 0.1s ease; }
+        
+        #sendBtn:disabled, .ui-disabled { 
+            opacity: 0.4; 
+            pointer-events: none; 
+            filter: grayscale(0.8); 
+            transition: all 0.3s ease; 
+        }
+
+        .dark .prose { color: #e2e8f0; }
+        .dark .prose strong { color: #f8fafc; }
+        .dark .prose code { color: #f8fafc; background: #334155; }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-slate-950 h-screen flex overflow-hidden font-sans transition-colors duration-300">
+
+    <aside class="w-72 bg-gray-900 text-white flex flex-col shadow-2xl z-20">
+        <div class="p-4 border-b border-gray-700">
+            <button id="newChatBtn" onclick="createNewChat()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition shadow-lg">
+                <span class="text-xl">+</span> New Chat
+            </button>
+        </div>
+        <div id="chat-list" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
+        <div class="p-4 border-t border-gray-700 text-[10px] text-gray-500 text-center uppercase tracking-widest">
+            Bender Enterprise v6.1
+        </div>
+    </aside>
+
+    <div class="flex-1 flex flex-col h-full bg-white dark:bg-slate-900 relative">
+        <header class="bg-white dark:bg-slate-900 border-b dark:border-slate-800 p-4 flex justify-between items-center shadow-sm z-10 transition-colors">
+            <div class="flex items-center gap-4">
+                <div class="w-14 h-14 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center border-2 border-gray-300 dark:border-slate-700">
+                    <img src="https://img.icons8.com/color/96/futurama-bender.png" alt="Bender" class="w-10 h-10">
+                </div>
+                <div>
+                    <h1 class="font-black text-xl text-gray-800 dark:text-blue-500 tracking-tight uppercase">Bender</h1>
+                    <p id="bender-quote" class="text-xs text-gray-500 italic font-medium"></p>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="toggleTheme()" title="Toggle Theme" class="text-gray-400 hover:text-blue-500 transition-colors p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-slate-800">
+                    <svg id="theme-icon-dark" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 18v1m9-9h1M3 12h1m15.364-6.364l.707-.707M6.343 17.657l-.707.707m12.728 0l.707-.707M6.343 6.343l-.707-.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                    <svg id="theme-icon-light" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+                </button>
+                <button onclick="copyChatHistory()" title="Copy entire chat" class="text-gray-400 hover:text-blue-500 transition-colors p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-slate-800">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                </button>
+                <button onclick="deleteCurrentChat()" title="Delete conversation" class="text-gray-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-red-50 dark:hover:bg-slate-800">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
+            </div>
+        </header>
+
+        <main id="chat-container" class="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50 dark:bg-slate-950 transition-colors"></main>
+
+        <div id="file-preview-area" class="hidden px-6 py-3 bg-blue-50 dark:bg-slate-800 border-t border-blue-100 dark:border-slate-700 flex flex-wrap gap-2 items-center"></div>
+
+        <footer class="p-6 bg-white dark:bg-slate-900 border-t dark:border-slate-800 transition-colors">
+            <div class="max-w-4xl mx-auto flex gap-4 items-end">
+                <input type="file" id="fileInput" class="hidden" accept=".pdf,.docx,.xlsx,.xls,.txt,.csv" multiple onchange="handleFileUpload(this)">
+                <button onclick="document.getElementById('fileInput').click()" title="Upload files" class="p-3 mb-1 text-gray-400 hover:text-blue-600 transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                </button>
+
+                <div class="flex-1 relative">
+                    <textarea id="userInput" 
+                        class="w-full border-2 border-gray-100 dark:border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:border-blue-500 dark:bg-slate-800 dark:text-white leading-relaxed overflow-hidden" 
+                        placeholder="Ask me anything..." 
+                        rows="1"></textarea>
+                </div>
+                
+                <button id="sendBtn" onclick="sendMessage()" disabled class="bg-blue-600 text-white p-4 mb-1 rounded-2xl hover:bg-blue-700 shadow-lg active:scale-95 transition-all">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6"><path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" /></svg>
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // ==========================================
+        // CONFIGURATION PARAMETERS
+        // ==========================================
+        const CONFIG = {
+            OLLAMA_URL: 'http://localhost:11434/api/chat', // Local API endpoint for Ollama
+            MODEL_NAME: 'llama3.1:8b', // Name of the model used for inference
+            CONTEXT_WINDOW: 10, // Max number of previous messages sent for context
+            SYSTEM_PROMPT_DEFAULT: "You are Bender, a helpful robot assistant. Be precise and witty.", // Standard AI persona instructions
+            SYSTEM_PROMPT_DOCS: "You are Bender. FOCUS STRICTLY ON THE PROVIDED DOCUMENTS.", // Persona instructions when documents are attached
+            QUOTES: [ // Randomized welcome messages
+                "System ready. What are we solving today, meatbag?",
+                "I'm faster than a vending machine coffee, and likely smarter.",
+                "I'm here to do the thinking so you don't have to.",
+                "Local LLM at your service. Just ask!",
+                "I'm bored. Give me a complicated PDF to shred."
+            ]
+        };
+
+        // Set the worker source for the PDF.js library
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        // State variables for managing chats and UI status
+        let allChats = JSON.parse(localStorage.getItem('hrt_chats')) || [];
+        let currentChatId = localStorage.getItem('hrt_current_id') || null;
+        let isGenerating = false; 
+
+        // Cache frequent DOM elements
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const chatListContainer = document.getElementById('chat-list');
+        const filePreviewArea = document.getElementById('file-preview-area');
+        const newChatBtn = document.getElementById('newChatBtn');
+
+        // Toggles between light and dark mode and saves preference to localStorage
+        function toggleTheme() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            updateThemeIcons(isDark);
+        }
+
+        // Updates visibility of theme icons based on current mode
+        function updateThemeIcons(isDark) {
+            document.getElementById('theme-icon-dark').classList.toggle('hidden', !isDark);
+            document.getElementById('theme-icon-light').classList.toggle('hidden', isDark);
+        }
+
+        // Initializes the theme based on saved user preference
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const isDark = savedTheme === 'dark';
+            if (isDark) document.documentElement.classList.add('dark');
+            updateThemeIcons(isDark);
+        }
+
+        // Enables or disables the send button based on input content and generation status
+        function updateSendButtonState() {
+            const hasText = userInput.value.trim().length > 0;
+            sendBtn.disabled = !hasText || isGenerating;
+        }
+
+        // Manages UI locking and visual feedback during model response generation
+        function setGeneratingState(state) {
+            isGenerating = state;
+            updateSendButtonState();
+            chatListContainer.classList.toggle('ui-disabled', state);
+            newChatBtn.classList.toggle('ui-disabled', state);
+        }
+
+        // Dynamically adjusts textarea height based on content
+        userInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+            updateSendButtonState();
+        });
+
+        // Prevents default enter behavior and triggers send message on Enter key
+        userInput.addEventListener('keydown', (e) => { 
+            if(e.key === 'Enter' && !e.shiftKey) { 
+                e.preventDefault(); 
+                if (!sendBtn.disabled) sendMessage(); 
+            } 
+        });
+
+        // Main initialization function for the application state and UI
+        function init() {
+            initTheme();
+            const randomQuote = CONFIG.QUOTES[Math.floor(Math.random() * CONFIG.QUOTES.length)];
+            const quoteEl = document.getElementById('bender-quote');
+            if(quoteEl) quoteEl.innerText = `"${randomQuote}"`;
+
+            if (allChats.length === 0) {
+                createNewChat();
+            } else {
+                if (!allChats.find(c => c.id === currentChatId)) currentChatId = allChats[0].id;
+                renderChatList();
+                loadChat(currentChatId);
+            }
+        }
+
+        // Handles multi-format file uploads and extracts text content for RAG
+        async function handleFileUpload(input) {
+            const files = Array.from(input.files);
+            if (files.length === 0) return;
+            let chat = allChats.find(c => c.id === currentChatId);
+            if (!chat.attachedDocs) chat.attachedDocs = [];
+            for (const file of files) {
+                const ext = file.name.split('.').pop().toLowerCase();
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    let content = "";
+                    try {
+                        if (ext === 'pdf') {
+                            const pdf = await pdfjsLib.getDocument({ data: e.target.result }).promise;
+                            for (let i = 1; i <= pdf.numPages; i++) {
+                                const page = await pdf.getPage(i);
+                                const text = await page.getTextContent();
+                                content += text.items.map(s => s.str).join(" ") + "\n";
+                            }
+                        } else if (ext === 'docx') {
+                            const res = await mammoth.extractRawText({ arrayBuffer: e.target.result });
+                            content = res.value;
+                        } else if (ext === 'xlsx' || ext === 'xls') {
+                            const wb = XLSX.read(e.target.result, { type: 'array' });
+                            content = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
+                        } else {
+                            content = new TextDecoder().decode(e.target.result);
+                        }
+                        chat.attachedDocs.push({ name: file.name, content: content });
+                        updateFilePreview();
+                        saveToStorage();
+                    } catch (err) { console.error("File parsing error:", err); }
+                };
+                if (['pdf', 'docx', 'xlsx', 'xls'].includes(ext)) reader.readAsArrayBuffer(file);
+                else reader.readAsText(file);
+            }
+            input.value = "";
+        }
+
+        // Updates the file preview bar with currently attached documents
+        function updateFilePreview() {
+            let chat = allChats.find(c => c.id === currentChatId);
+            if (!chat || !chat.attachedDocs || chat.attachedDocs.length === 0) { 
+                filePreviewArea.classList.add('hidden'); 
+                return; 
+            }
+            filePreviewArea.innerHTML = chat.attachedDocs.map((doc, i) => `
+                <div class="bg-white dark:bg-slate-700 border border-blue-200 dark:border-slate-600 px-3 py-1 rounded-lg flex items-center gap-2 shadow-sm animate-fade-in">
+                    <span class="text-xs font-bold text-blue-700 dark:text-blue-300">📎 ${doc.name}</span>
+                    <button onclick="removeDoc(${i})" class="text-red-400 hover:text-red-600 font-bold ml-1">&times;</button>
+                </div>
+            `).join('');
+            filePreviewArea.classList.remove('hidden');
+        }
+
+        // Removes a specific document from the current chat session
+        function removeDoc(i) { 
+            let chat = allChats.find(c => c.id === currentChatId);
+            chat.attachedDocs.splice(i, 1); 
+            updateFilePreview(); 
+            saveToStorage();
+        }
+
+        // Core logic for sending messages to the LLM and handling streaming responses
+        async function sendMessage() {
+            if (isGenerating) return;
+            const text = userInput.value.trim();
+            let chat = allChats.find(c => c.id === currentChatId);
+            if (!chat || !text) return;
+
+            setGeneratingState(true);
+
+            if (chat.messages.length === 0) chat.title = text.substring(0, 25);
+
+            let currentSystemMsg = CONFIG.SYSTEM_PROMPT_DEFAULT;
+            let fullPrompt = text;
+            
+            if (chat.attachedDocs && chat.attachedDocs.length > 0) {
+                const docsText = chat.attachedDocs.map(d => `DOC: ${d.name}\nCONTENT: ${d.content}`).join("\n\n");
+                currentSystemMsg = CONFIG.SYSTEM_PROMPT_DOCS;
+                fullPrompt = `DOCUMENT CONTEXT:\n${docsText}\n\nUSER QUERY: ${text}`;
+            }
+
+            const msgIdx = chat.messages.length;
+            chat.messages.push({ role: 'user', content: text });
+            appendToUI('user', text, msgIdx);
+            
+            userInput.value = '';
+            userInput.style.height = 'auto';
+            saveToStorage();
+
+            const aiBubble = appendToUI('assistant', '<div class="flex gap-1 py-1"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>', chat.messages.length);
+            let fullResponse = '';
+
+            try {
+                const historySlice = chat.messages.slice(-(CONFIG.CONTEXT_WINDOW + 1), -1);
+                const response = await fetch(CONFIG.OLLAMA_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model: CONFIG.MODEL_NAME,
+                        messages: [
+                            { role: 'system', content: currentSystemMsg }, 
+                            ...historySlice, 
+                            { role: 'user', content: fullPrompt }
+                        ],
+                        stream: true
+                    })
+                });
+
+                const reader = response.body.getReader();
+                aiBubble.innerHTML = ''; 
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = new TextDecoder().decode(value);
+                    const lines = chunk.split('\n');
+                    for(const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const json = JSON.parse(line);
+                            if (json.message?.content) {
+                                fullResponse += json.message.content;
+                                aiBubble.innerHTML = marked.parse(fullResponse);
+                                chatContainer.scrollTop = chatContainer.scrollHeight;
+                            }
+                        } catch(e) {}
+                    }
+                }
+                const finalAiIdx = chat.messages.length;
+                chat.messages.push({ role: 'assistant', content: fullResponse });
+                saveToStorage();
+                addDeleteBtnToBubble(aiBubble.parentElement, finalAiIdx, 'assistant');
+                
+            } catch (e) { 
+                aiBubble.innerText = "Error communicating with Bender."; 
+            } finally {
+                setGeneratingState(false);
+            }
+        }
+
+        // Initializes a new chat session and switches to it
+        function createNewChat() { 
+            const id = Date.now().toString(); 
+            allChats.unshift({ id, title: "New Conversation", messages: [], attachedDocs: [] }); 
+            currentChatId = id; 
+            saveToStorage(); 
+            loadChat(id); 
+        }
+
+        // Loads a specific chat session by ID and refreshes the UI
+        function loadChat(id) { 
+            currentChatId = id; 
+            localStorage.setItem('hrt_current_id', id); 
+            renderMessages();
+            updateFilePreview();
+            renderChatList(); 
+            updateSendButtonState();
+        }
+
+        // Clears and re-renders all messages for the current chat session
+        function renderMessages() {
+            const chat = allChats.find(c => c.id === currentChatId);
+            chatContainer.innerHTML = '';
+            if (chat && chat.messages) {
+                chat.messages.forEach((m, idx) => appendToUI(m.role, m.content, idx));
+            }
+        }
+
+        // Removes a single message from the chat history after confirmation
+        function deleteMessage(idx) {
+            const chat = allChats.find(c => c.id === currentChatId);
+            if (chat && confirm("Delete this message?")) {
+                chat.messages.splice(idx, 1);
+                saveToStorage();
+                renderMessages();
+            }
+        }
+
+        // Injects a message bubble into the chat DOM with appropriate styling
+        function appendToUI(role, content, index) {
+            const wrapper = document.createElement('div'); 
+            wrapper.className = `flex flex-col ${role==='user'?'items-end':'items-start'} animate-fade-in mb-4`;
+            const bubbleContainer = document.createElement('div');
+            bubbleContainer.className = `bubble-container relative group max-w-[85%]`;
+            const bubble = document.createElement('div'); 
+            bubble.className = role==='user'
+                ? 'bg-blue-600 text-white p-4 rounded-2xl rounded-br-none shadow-md'
+                : 'bg-white dark:bg-slate-800 dark:border-slate-700 border p-4 rounded-2xl rounded-bl-none shadow-sm text-gray-800 dark:text-slate-100 prose prose-slate max-w-none';
+            bubble.innerHTML = content.includes('typing-dot') ? content : marked.parse(content);
+            bubbleContainer.appendChild(bubble);
+            wrapper.appendChild(bubbleContainer);
+            chatContainer.appendChild(wrapper); 
+            if (!content.includes('typing-dot')) {
+                addDeleteBtnToBubble(bubbleContainer, index, role);
+                bubble.style.paddingRight = "2.5rem"; 
+            }
+            chatContainer.scrollTop = chatContainer.scrollHeight; 
+            return bubble;
+        }
+
+        // Attaches a hidden delete button to a message bubble (visible on hover)
+        function addDeleteBtnToBubble(container, index, role) {
+            const oldBtn = container.querySelector('.msg-del-btn');
+            if (oldBtn) oldBtn.remove();
+            const delBtn = document.createElement('button');
+            delBtn.className = `msg-del-btn absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 z-10 transition-colors`;
+            delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
+            delBtn.onclick = (e) => { e.stopPropagation(); deleteMessage(index); };
+            container.appendChild(delBtn);
+        }
+
+        // Opens a prompt to rename the current chat session
+        function renameChat(id, e) {
+            e.stopPropagation();
+            const chat = allChats.find(c => c.id === id);
+            const nt = prompt("New conversation name:", chat.title);
+            if (nt) { chat.title = nt; saveToStorage(); renderChatList(); }
+        }
+
+        // Re-renders the list of chat sessions in the sidebar
+        function renderChatList() { 
+            chatListContainer.innerHTML = ''; 
+            allChats.forEach(c => { 
+                const d = document.createElement('div'); 
+                d.className = `chat-item group flex justify-between items-center p-3 mb-1 rounded-xl cursor-pointer transition ${c.id === currentChatId ? 'bg-gray-800 border-l-4 border-blue-500 text-white font-bold' : 'text-gray-400 hover:bg-gray-800/50'}`; 
+                d.innerHTML = `<span class="truncate flex-1">${c.title}</span><button onclick="renameChat('${c.id}', event)" class="rename-btn ml-2 text-gray-500 hover:text-yellow-400 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>`;
+                d.onclick = () => loadChat(c.id); 
+                chatListContainer.appendChild(d); 
+            }); 
+        }
+
+        // Deletes the entire active chat session and updates the list
+        function deleteCurrentChat() { 
+            if(confirm("Delete this entire conversation?")) { 
+                allChats = allChats.filter(c => c.id !== currentChatId); 
+                if(allChats.length===0) createNewChat(); 
+                else { currentChatId = allChats[0].id; saveToStorage(); init(); } 
+            } 
+        }
+
+        // Copies the entire plain-text conversation history to the user's clipboard
+        function copyChatHistory() {
+            const chat = allChats.find(c => c.id === currentChatId);
+            if(!chat) return;
+            const h = chat.messages.map(m => `${m.role === 'user' ? 'You' : 'Bender'}: ${m.content}`).join('\n\n');
+            navigator.clipboard.writeText(h).then(() => alert("Copied to clipboard!"));
+        }
+
+        // Serializes chat state and saves it to the browser's LocalStorage
+        function saveToStorage() { 
+            try { localStorage.setItem('hrt_chats', JSON.stringify(allChats)); } 
+            catch (e) { alert("LocalStorage is full!"); }
+        }
+
+        // Entry point for the application
+        init();
+    </script>
+</body>
+</html>
